@@ -1,1 +1,1 @@
-Learning control barrier function with generative model
+## Learning control barrier function with generative model
