@@ -48,8 +48,9 @@ class DiffusionPolicy(nn.Module):
 
 def custom_loss(pred, target, state):
     mse_loss = nn.MSELoss()(pred, target)
-    inventory_penalty = torch.mean(torch.relu(250 - (state + pred)) + torch.relu((state + pred) - 250))
-    return mse_loss + 0.1 * inventory_penalty
+    stockout_penalty = torch.mean(torch.exp(-state))  # Exponential penalty for low inventory
+    overstocking_penalty = torch.mean(torch.relu((state + pred) - 250))
+    return mse_loss + 0.1 * stockout_penalty + 0.05 * overstocking_penalty
 
 def train_diffusion_policy(policy, train_data, num_epochs=100, batch_size=64, lr=1e-4):
     optimizer = optim.Adam(policy.parameters(), lr=lr)
