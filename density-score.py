@@ -40,6 +40,6 @@ fig, ax = plt.subplots(figsize=(8, 8))
 contour = ax.contourf(x, y, pdf, levels=20, cmap='plasma', alpha=0.8)  # Changed color scheme
 cbar = fig.colorbar(contour, ax=ax)
 cbar.ax.set_ylabel('Density')
-ax.quiver(x, y, score[:, :, 0], score[:, :, 1], color='black', scale=20)  # Reduced scale for arrows
+ax.quiver(x, y, score[:, :, 0], score[:, :, 1], color='black', scale=100)  # Reduced scale for arrows
 ax.set_title('Score vs. Density Function')
 plt.show()

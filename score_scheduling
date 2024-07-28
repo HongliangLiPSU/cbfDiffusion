@@ -1,0 +1,192 @@
+import numpy as np
+import matplotlib.pyplot as plt
+from scipy.stats import entropy
+from matplotlib.colors import TABLEAU_COLORS
+
+# Simplified manufacturing system parameters
+num_machines = 3
+num_buffers = 2
+buffer_capacity = 5
+states = (buffer_capacity + 1) ** num_buffers  # State space size
+actions = num_buffers  # Action space size
+
+# Initialize Q-table and transition probabilities
+Q = np.zeros((states, actions))
+theta = np.random.rand(states, actions, states)
+theta /= theta.sum(axis=2, keepdims=True)
+
+# Function to convert buffer levels to state index
+def buffers_to_state(buffers):
+    return sum(b * (buffer_capacity + 1) ** i for i, b in enumerate(buffers))
+
+# Function to convert state index to buffer levels
+def state_to_buffers(state):
+    buffers = []
+    for _ in range(num_buffers):
+        buffers.append(state % (buffer_capacity + 1))
+        state //= (buffer_capacity + 1)
+    return buffers
+
+# Function to simulate the manufacturing environment
+def simulate_manufacturing(state, action):
+    buffers = state_to_buffers(state)
+    
+    # Process items
+    if buffers[action] > 0:
+        buffers[action] -= 1
+        if action < num_buffers - 1:
+            buffers[action + 1] = min(buffers[action + 1] + 1, buffer_capacity)
+    
+    # Random arrivals
+    for i in range(num_buffers):
+        if np.random.rand() < 0.3:  # 30% chance of arrival
+            buffers[i] = min(buffers[i] + 1, buffer_capacity)
+    
+    next_state = buffers_to_state(buffers)
+    
+    # Reward function: less punitive
+    reward = -0.1 * sum(b == 0 for b in buffers[:-1]) - 0.2 * (buffers[-1] == buffer_capacity)
+    
+    return next_state, reward
+
+# Function to generate trajectories using epsilon-greedy policy
+def generate_trajectories(num_trajectories, max_steps, epsilon):
+    trajectories = []
+    for _ in range(num_trajectories):
+        trajectory = []
+        state = np.random.randint(0, states)
+        for _ in range(max_steps):
+            if np.random.rand() < epsilon:
+                action = np.random.randint(0, actions)
+            else:
+                action = np.argmax(Q[state])
+            next_state, reward = simulate_manufacturing(state, action)
+            trajectory.append((state, action, next_state, reward))
+            state = next_state
+        trajectories.append(trajectory)
+    return trajectories
+
+# Function to compute the score function (gradient of log-likelihood)
+def compute_score(theta, trajectories):
+    grad = np.zeros_like(theta)
+    epsilon = 1e-10  # Small constant to avoid division by zero
+    for trajectory in trajectories:
+        for (s, a, s_next, _) in trajectory:
+            grad[s, a, s_next] += 1 / (theta[s, a, s_next] + epsilon)
+    return grad
+
+# Function to compute KL divergence between old and new theta
+def compute_kl_divergence(theta_old, theta_new):
+    epsilon = 1e-10  # Small constant to avoid log(0)
+    return np.mean([entropy(theta_old[s, a] + epsilon, theta_new[s, a] + epsilon) 
+                    for s in range(states) for a in range(actions)])
+
+# Training loop
+max_iterations = 1000
+convergence_threshold = 1e-4
+alpha = 0.01  # Initial learning rate
+
+score_norms = []  # To store score function norms
+
+for iteration in range(max_iterations):
+    trajectories = generate_trajectories(num_trajectories=20, max_steps=100, epsilon=0.1)
+    
+    grad = compute_score(theta, trajectories)
+    score_norms.append(np.linalg.norm(grad))
+    
+    theta_old = theta.copy()
+    
+    theta += alpha * grad
+    theta = np.clip(theta, 1e-10, None)  # Ensure no zero probabilities
+    theta /= theta.sum(axis=2, keepdims=True)
+    
+    kl_div = compute_kl_divergence(theta_old, theta)
+    
+    if kl_div < convergence_threshold:
+        print(f"Converged after {iteration + 1} iterations.")
+        break
+    
+    # Adaptive learning rate
+    alpha *= 0.99
+
+# Update Q-values based on learned transition probabilities
+for s in range(states):
+    for a in range(actions):
+        Q[s, a] = sum(theta[s, a, s_next] * simulate_manufacturing(s_next, np.argmax(Q[s_next]))[1] 
+                      for s_next in range(states))
+
+# Evaluation phase
+def evaluate_policy(num_episodes, max_steps):
+    total_rewards = []
+    for _ in range(num_episodes):
+        state = np.random.randint(0, states)
+        episode_reward = 0
+        for _ in range(max_steps):
+            action = np.argmax(Q[state])
+            next_state, reward = simulate_manufacturing(state, action)
+            episode_reward += reward
+            state = next_state
+        total_rewards.append(episode_reward)
+    return np.mean(total_rewards), np.std(total_rewards)
+
+mean_reward, std_reward = evaluate_policy(num_episodes=100, max_steps=200)
+print(f"Evaluation: Mean reward = {mean_reward:.2f} ± {std_reward:.2f}")
+
+# Improved visualization function
+def improved_plot_trajectories(trajectories, num_buffers, buffer_capacity):
+    num_trajectories = len(trajectories)
+    max_steps = max(len(t) for t in trajectories)
+    
+    fig, axs = plt.subplots(num_trajectories + 1, 1, figsize=(15, 5 * (num_trajectories + 1)), sharex=True)
+    fig.suptitle('Generated Trajectories and Scheduling Decisions', fontsize=16)
+    
+    # Use TABLEAU_COLORS instead of color map
+    colors = list(TABLEAU_COLORS.values())[:num_buffers]
+    
+    for i, trajectory in enumerate(trajectories):
+        states, actions, _, _ = zip(*trajectory)
+        buffer_levels = np.array([state_to_buffers(s) for s in states])
+        
+        for j in range(num_buffers):
+            axs[i].step(range(len(states)), buffer_levels[:, j], where='post', 
+                        label=f'Buffer {j+1}', color=colors[j])
+            axs[i].fill_between(range(len(states)), buffer_levels[:, j], step="post", alpha=0.3, color=colors[j])
+        
+        for step, action in enumerate(actions):
+            axs[i].annotate(f'A{action}', (step, buffer_capacity), xytext=(0, 5), 
+                            textcoords='offset points', ha='center', va='bottom', fontsize=8)
+        
+        axs[i].set_ylabel('Buffer Level')
+        axs[i].set_ylim(0, buffer_capacity + 1)
+        axs[i].set_title(f'Trajectory {i+1}')
+        axs[i].legend(loc='upper left')
+        axs[i].grid(True, linestyle='--', alpha=0.7)
+    
+    # Buffer Processing Heatmap
+    machine_utilization = np.zeros((num_buffers, max_steps))
+    for trajectory in trajectories:
+        for t, (_, action, _, _) in enumerate(trajectory):
+            machine_utilization[action, t] += 1
+    machine_utilization /= num_trajectories
+    
+    im = axs[-1].imshow(machine_utilization, cmap='YlOrRd', aspect='auto', interpolation='nearest')
+    axs[-1].set_xlabel('Time Step')
+    axs[-1].set_ylabel('Buffer')
+    axs[-1].set_title('Buffer Processing Heatmap')
+    plt.colorbar(im, ax=axs[-1], label='Processing Rate')
+    
+    plt.tight_layout()
+    plt.show()
+
+# Plot score function norm
+plt.figure(figsize=(10, 5))
+plt.plot(score_norms)
+plt.xlabel('Iteration')
+plt.ylabel('Score Function Norm')
+plt.title('Score Function Norm over Iterations')
+plt.grid(True)
+plt.show()
+
+# Generate and plot trajectories
+eval_trajectories = generate_trajectories(num_trajectories=1, max_steps=50, epsilon=0)
+improved_plot_trajectories(eval_trajectories, num_buffers, buffer_capacity)
