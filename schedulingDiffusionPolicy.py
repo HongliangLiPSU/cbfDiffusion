@@ -4,6 +4,7 @@ import torch.optim as optim
 import numpy as np
 from tqdm import tqdm
 import matplotlib.pyplot as plt
+import seaborn as sns
 
 class DiffusionPolicy(nn.Module):
     def __init__(self, state_dim, action_dim, hidden_dim=256, num_steps=10):
@@ -28,9 +29,11 @@ class DiffusionPolicy(nn.Module):
         x = torch.cat([x, t], dim=-1)
         return self.net(x)
 
-    def sample(self, state, num_samples=1):
+    def sample(self, state, num_samples=1, return_trajectory=False):
         batch_size = state.shape[0]
         x = torch.randn(batch_size, num_samples, 2, device=state.device)  # Initial noise
+        
+        trajectory = [x.cpu().numpy()] if return_trajectory else None
         
         for t in range(self.num_steps, 0, -1):
             t_tensor = torch.full((batch_size, num_samples), t, device=state.device)
@@ -39,12 +42,20 @@ class DiffusionPolicy(nn.Module):
             pred_noise = self.forward(x_input.view(-1, x_input.shape[-1]), t_tensor.view(-1))
             x = x - pred_noise.view(batch_size, num_samples, -1)  # Denoising step
             
+            if return_trajectory:
+                trajectory.append(x.cpu().numpy())
+            
             if t > 1:
                 noise = torch.randn_like(x)
                 sigma = 0.1  # You can adjust this
                 x = x + sigma * noise
         
-        return torch.sigmoid(x.mean(dim=1)) * 80  # Scale actions to [0, 80] range
+        final_actions = torch.sigmoid(x) * 80  # Scale actions to [0, 80] range
+        
+        if return_trajectory:
+            return final_actions, trajectory
+        else:
+            return final_actions
 
 def custom_loss(pred, target, state):
     mse_loss = nn.MSELoss()(pred, target)
@@ -126,18 +137,74 @@ def demand_func(demand_max1=150, demand_max2=75, interval1=4, interval2=3):
     demand2 = np.random.lognormal(mean=np.log(demand_max2), sigma=0.5) / interval2
     return np.array([demand1, demand2])
 
+def visualize_action_distribution(policy, state):
+    with torch.no_grad():
+        actions, trajectory = policy.sample(state, num_samples=1000, return_trajectory=True)
+    
+    actions = actions.squeeze().numpy()
+    
+    plt.figure(figsize=(12, 5))
+    
+    plt.subplot(1, 2, 1)
+    sns.kdeplot(actions[:, 0], shade=True)
+    plt.title('Distribution of Action 1')
+    plt.xlabel('Action Value')
+    plt.ylabel('Density')
+    
+    plt.subplot(1, 2, 2)
+    sns.kdeplot(actions[:, 1], shade=True)
+    plt.title('Distribution of Action 2')
+    plt.xlabel('Action Value')
+    plt.ylabel('Density')
+    
+    plt.tight_layout()
+    plt.show()
+    
+    return trajectory
+
+def visualize_diffusion_process(trajectory):
+    num_steps = len(trajectory)
+    fig, axes = plt.subplots(2, 5, figsize=(20, 8))
+    fig.suptitle('Diffusion Process Visualization', fontsize=16)
+    
+    for i, step_actions in enumerate(reversed(trajectory)):
+        if i >= 10:  # We'll show only 10 steps
+            break
+        
+        row = i // 5
+        col = i % 5
+        
+        sns.kdeplot(step_actions[0, :, 0], ax=axes[row, col], shade=True)
+        sns.kdeplot(step_actions[0, :, 1], ax=axes[row, col], shade=True)
+        
+        axes[row, col].set_title(f'Step {num_steps - i}')
+        axes[row, col].set_xlim(-0.2, 1.2)  # Adjusted for sigmoid output
+        axes[row, col].set_ylim(0, 5)
+        
+        if col == 0:
+            axes[row, col].set_ylabel('Density')
+        if row == 1:
+            axes[row, col].set_xlabel('Action Value')
+    
+    plt.tight_layout()
+    plt.show()
+
 if __name__ == "__main__":
     policy = DiffusionPolicy(state_dim=2, action_dim=2)
     
     train_data = generate_training_data(50000, demand_func)  # Increased training data
     train_diffusion_policy(policy, train_data, num_epochs=1000)  # Increased epochs
     
-    initial_state = np.array([125, 125])  # Start with half-full inventories
-    states, actions, demands = simulate_inventory(policy, initial_state, num_steps=30, demand_func=demand_func)
+    initial_state = torch.tensor([[125, 125]], dtype=torch.float32)  # Start with half-full inventories
     
-    print("States:", states)
-    print("Actions:", actions)
-    print("Demands:", demands)
+    # Visualize action distribution
+    trajectory = visualize_action_distribution(policy, initial_state)
+    
+    # Visualize diffusion process
+    visualize_diffusion_process(trajectory)
+    
+    # Run simulation and plot results
+    states, actions, demands = simulate_inventory(policy, initial_state.numpy()[0], num_steps=30, demand_func=demand_func)
     
     plt.figure(figsize=(12, 8))
     
