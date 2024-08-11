@@ -8,9 +8,7 @@ import random
 import copy
 
 class InventoryEnvironment:
-    def __init__(self, num_products: int, capacity: float, max_order: float,
-                 holding_cost: float, stockout_cost: float, order_cost: float,
-                 lead_time: int = 1, demand_variability: float = 0.5):
+    def __init__(self, num_products, capacity, max_order, holding_cost, stockout_cost, order_cost, lead_time, demand_variability):
         self.num_products = num_products
         self.capacity = capacity
         self.max_order = max_order
@@ -21,12 +19,13 @@ class InventoryEnvironment:
         self.demand_variability = demand_variability
         self.pending_orders = [[] for _ in range(num_products)]
         self.state = np.zeros(num_products)
+        self.target_service_level = 0.95  # Target service level
         
     def demand_func(self, seasonality: float = 1.0) -> np.ndarray:
         base_demand = np.random.lognormal(mean=np.log(self.capacity/4), sigma=self.demand_variability, size=self.num_products)
         return base_demand * seasonality
     
-    def step(self, action: np.ndarray, seasonality: float):
+    def step(self, action, seasonality):
         demand = self.demand_func(seasonality)
         
         # Process pending orders
@@ -44,13 +43,22 @@ class InventoryEnvironment:
         
         # Calculate costs
         holding_cost = self.holding_cost * np.sum(new_state)
-        stockout_cost = self.stockout_cost * np.sum(np.maximum(demand - self.state, 0))
+        stockout = np.maximum(demand - self.state, 0)
+        stockout_cost = self.stockout_cost * np.sum(stockout)
         order_cost = self.order_cost * np.sum(action)
         
         total_cost = holding_cost + stockout_cost + order_cost
         
+        # Calculate service level
+        service_level = np.mean(stockout == 0)
+        
+        # Adjust reward based on service level
+        service_level_penalty = 1000 * max(0, self.target_service_level - service_level)
+        
+        reward = -total_cost - service_level_penalty
+        
         self.state = new_state
-        return self.get_state(), -total_cost, demand
+        return self.get_state(), reward, demand
 
     def get_state(self):
         return np.concatenate([self.state, np.array([sum(orders) for orders in self.pending_orders])])
@@ -61,7 +69,7 @@ class InventoryEnvironment:
         return self.get_state()
 
 class DiffusionPolicy(nn.Module):
-    def __init__(self, state_dim, action_dim, hidden_dim=256, num_steps=10, prediction_horizon=5):
+    def __init__(self, state_dim, action_dim, hidden_dim=512, num_steps=10, prediction_horizon=5):
         super().__init__()
         self.num_steps = num_steps
         self.prediction_horizon = prediction_horizon
@@ -69,6 +77,8 @@ class DiffusionPolicy(nn.Module):
         
         self.net = nn.Sequential(
             nn.Linear(state_dim + action_dim * prediction_horizon + 1, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, hidden_dim),
             nn.ReLU(),
             nn.Linear(hidden_dim, hidden_dim),
             nn.ReLU(),
@@ -133,11 +143,13 @@ class ReplayBuffer:
     def __len__(self):
         return len(self.buffer)
 
-def train_diffusion_policy(policy, env, num_epochs=1000, batch_size=64, lr=1e-4, gamma=0.99, target_update=10):
+def train_diffusion_policy(policy, env, num_epochs=2000, batch_size=128, lr=1e-4, gamma=0.99, target_update=10, epsilon_start=1.0, epsilon_end=0.01, epsilon_decay=0.995):
     optimizer = optim.Adam(policy.parameters(), lr=lr)
-    scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=200, gamma=0.5)
-    replay_buffer = ReplayBuffer(10000)
+    scheduler = optim.StepLR(optimizer, step_size=200, gamma=0.5)
+    replay_buffer = ReplayBuffer(100000)  # Increased buffer size
     target_policy = copy.deepcopy(policy)
+    
+    epsilon = epsilon_start
     
     for epoch in tqdm(range(num_epochs)):
         state = env.reset()
@@ -145,8 +157,14 @@ def train_diffusion_policy(policy, env, num_epochs=1000, batch_size=64, lr=1e-4,
         
         for t in range(100):  # episode length
             state_tensor = torch.tensor(state).float().unsqueeze(0)
-            action = policy.sample(state_tensor).squeeze().detach().numpy()
-            action = action[0, :env.num_products]  # Take only the first action for each product
+            
+            # Epsilon-greedy action selection
+            if random.random() < epsilon:
+                action = np.random.uniform(0, env.max_order, env.num_products)
+            else:
+                action = policy.sample(state_tensor).squeeze().detach().numpy()
+                action = action[0, :env.num_products]  # Take only the first action for each product
+            
             next_state, reward, _ = env.step(action, 1.0)  # Assuming no seasonality for simplicity
             replay_buffer.push(state, action, reward, next_state)
             state = next_state
@@ -179,13 +197,15 @@ def train_diffusion_policy(policy, env, num_epochs=1000, batch_size=64, lr=1e-4,
                 loss.backward()
                 optimizer.step()
 
+        epsilon = max(epsilon_end, epsilon * epsilon_decay)
+        
         if epoch % target_update == 0:
             target_policy.load_state_dict(policy.state_dict())
 
         scheduler.step()
         
         if epoch % 10 == 0:
-            print(f"Epoch {epoch}, Total Reward: {total_reward}")
+            print(f"Epoch {epoch}, Total Reward: {total_reward}, Epsilon: {epsilon:.4f}")
 
     return policy
 
@@ -269,7 +289,7 @@ if __name__ == "__main__":
     policy = DiffusionPolicy(state_dim=4, action_dim=2, prediction_horizon=5)  # 4 = 2 products + 2 pending orders
     
     # Train the policy
-    trained_policy = train_diffusion_policy(policy, env, num_epochs=1000, batch_size=64)
+    trained_policy = train_diffusion_policy(policy, env, num_epochs=2000, batch_size=128)
     
     # Simulate inventory management
     initial_state = env.reset()
