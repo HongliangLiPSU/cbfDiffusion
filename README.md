@@ -1,6 +1,6 @@
 ## CBF Diffusion
 
-Python-only workflows for learning and validating Control Barrier Functions (CBFs) on a double-integrator system.
+Learning and validating Control Barrier Functions (CBFs) on a double-integrator system.
 
 ### Project Layout
 
