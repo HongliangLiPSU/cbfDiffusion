@@ -1,4 +1,5 @@
 import argparse
+from pathlib import Path
 
 import torch
 
@@ -67,7 +68,7 @@ def main():
     parser.add_argument(
         "--output",
         type=str,
-        default="safe_trajectories.pt",
+        default="artifacts/data/safe_trajectories.pt",
         help="Output file (.pt) containing safe_trajectories and rollout data.",
     )
     parser.add_argument("--plot", action="store_true", help="Plot position and velocity trajectories.")
@@ -83,9 +84,11 @@ def main():
         "c": args.c,
         "dt": args.dt,
     }
-    torch.save(payload, args.output)
+    output_path = Path(args.output)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    torch.save(payload, output_path)
 
-    print(f"Saved safe trajectories to {args.output}")
+    print(f"Saved safe trajectories to {output_path}")
     print(f"safe_trajectories shape: {tuple(safe_trajectories.shape)}")
 
     if args.plot:

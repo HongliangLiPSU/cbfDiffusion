@@ -1,0 +1,12 @@
+# Python
+__pycache__/
+*.py[cod]
+
+# OS/editor
+.DS_Store
+
+# Local build/cache outputs
+.pycache/
+
+# Generated artifacts
+artifacts/data/*.pt

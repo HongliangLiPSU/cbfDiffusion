@@ -1,4 +1,5 @@
 import argparse
+from pathlib import Path
 
 import torch
 import torch.nn as nn
@@ -88,13 +89,18 @@ def maybe_export_onnx(
 
 def main():
     parser = argparse.ArgumentParser(description="Train a CBF regressor in pure Python (no MATLAB required).")
-    parser.add_argument("--data", type=str, default="safe_trajectories.pt", help="Input dataset from trainingDataGen.py.")
+    parser.add_argument(
+        "--data",
+        type=str,
+        default="artifacts/data/safe_trajectories.pt",
+        help="Input dataset from trainingDataGen.py.",
+    )
     parser.add_argument("--c", type=float, default=1.0, help="Safe set constant used for target CBF labels.")
     parser.add_argument("--epochs", type=int, default=200)
     parser.add_argument("--batch-size", type=int, default=128)
     parser.add_argument("--lr", type=float, default=1e-3)
-    parser.add_argument("--model-out", type=str, default="cbf_model.pth")
-    parser.add_argument("--onnx-out", type=str, default="cbf_model.onnx")
+    parser.add_argument("--model-out", type=str, default="artifacts/models/cbf_model.pth")
+    parser.add_argument("--onnx-out", type=str, default="artifacts/models/cbf_model.onnx")
     parser.add_argument("--skip-onnx", action="store_true", help="Skip ONNX export.")
     args = parser.parse_args()
 
@@ -143,11 +149,15 @@ def main():
         "output_std": y_std,
         "c": args.c,
     }
-    torch.save(checkpoint, args.model_out)
-    print(f"Saved trained model to {args.model_out}")
+    model_out = Path(args.model_out)
+    model_out.parent.mkdir(parents=True, exist_ok=True)
+    torch.save(checkpoint, model_out)
+    print(f"Saved trained model to {model_out}")
 
     if not args.skip_onnx:
-        maybe_export_onnx(model, X_mean, X_std, y_mean, y_std, args.onnx_out)
+        onnx_out = Path(args.onnx_out)
+        onnx_out.parent.mkdir(parents=True, exist_ok=True)
+        maybe_export_onnx(model, X_mean, X_std, y_mean, y_std, str(onnx_out))
 
 
 if __name__ == "__main__":

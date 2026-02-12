@@ -1,41 +1,54 @@
-## Learning Control Barrier Functions (Python-Only)
+## CBF Diffusion
 
-This repo can now run end-to-end without MATLAB.
+Python-only workflows for learning and validating Control Barrier Functions (CBFs) on a double-integrator system.
 
-### Python Replacement for Legacy MATLAB Flow
+### Project Layout
 
-1. Generate trajectories:
-
-```bash
-python3 trainingDataGen.py --output safe_trajectories.pt
+```text
+.
+├── artifacts/
+│   ├── data/          # Generated trajectory files (.pt)
+│   └── models/        # Trained models (.pth/.onnx)
+├── legacy/
+│   ├── experiments/   # Older exploratory scripts
+│   ├── matlab/        # Original MATLAB scripts
+│   └── data/          # Legacy .mat files
+├── diffusion_cbf.py   # Diffusion-based CBF training/evaluation
+├── trainingDataGen.py # Generate safe trajectories (Python replacement)
+├── trainNN.py         # Train neural CBF regressor
+├── validateNN.py      # Validate learned CBF in closed-loop simulation
+└── Makefile
 ```
 
-2. Train CBF regressor:
+### Setup
 
 ```bash
-python3 trainNN.py --data safe_trajectories.pt --model-out cbf_model.pth
+python3 -m pip install -r requirements.txt
 ```
 
-3. Validate in simulation:
+### Standard CBF Workflow
 
 ```bash
-python3 validateNN.py --model cbf_model.pth --output safe_trajectories_learned.pt
+python3 trainingDataGen.py
+python3 trainNN.py
+python3 validateNN.py
 ```
 
-This replaces:
+Equivalent `make` targets:
 
-- `trainingDataGen.m` -> `trainingDataGen.py`
-- `validateNN.m` -> `validateNN.py`
+```bash
+make generate-data
+make train-cbf
+make validate-cbf
+```
 
 ### Diffusion-Based CBF Workflow
-
-For the diffusion-model CBF pipeline on the double integrator:
 
 ```bash
 python3 diffusion_cbf.py --epochs 300 --device cpu
 ```
 
-It prints:
+This prints:
 
 - diffusion training loss,
 - safe/unsafe classification metrics (`accuracy`, `precision`, `recall`, `f1`),
